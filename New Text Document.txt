@@ -1,0 +1,336 @@
+import datetime
+import uuid
+import random
+from enum import Enum
+
+
+class TicketStatus(Enum):
+    AVAILABLE = "Available"
+    BOOKED = "Booked"
+    CANCELED = "Canceled"
+
+
+class PaymentMethod(Enum):
+    CREDIT_CARD = "Credit Card"
+    DEBIT_CARD = "Debit Card"
+    NETBANKING = "Net Banking"
+    WALLET = "Digital Wallet"
+
+
+class Venue:
+    def __init__(self, name, address, seating_capacity):
+        self.name = name
+        self.address = address
+        self.seating_capacity = seating_capacity
+    
+    def __str__(self):
+        return f"{self.name} ({self.seating_capacity} seats) - {self.address}"
+
+
+class Event:
+    def __init__(self, name, venue, date, description, category):
+        self.id = str(uuid.uuid4())[:8]
+        self.name = name
+        self.venue = venue
+        self.date = date
+        self.description = description
+        self.category = category
+        self.ticket_categories = []
+    
+    def add_ticket_category(self, category):
+        self.ticket_categories.append(category)
+    
+    def get_available_tickets(self):
+        available = []
+        for category in self.ticket_categories:
+            available_in_category = category.get_available_count()
+            if available_in_category > 0:
+                available.append((category, available_in_category))
+        return available
+    
+    def __str__(self):
+        return f"{self.name} - {self.date.strftime('%d %b %Y, %H:%M')} at {self.venue.name}"
+
+
+class TicketCategory:
+    def __init__(self, name, price, total_seats):
+        self.name = name
+        self.price = price
+        self.total_seats = total_seats
+        self.tickets = self._generate_tickets()
+    
+    def _generate_tickets(self):
+        tickets = []
+        for i in range(self.total_seats):
+            ticket_id = f"{self.name[0:2].upper()}{random.randint(1000, 9999)}"
+            tickets.append(Ticket(ticket_id, self.name, self.price))
+        return tickets
+    
+    def get_available_count(self):
+        return sum(1 for ticket in self.tickets if ticket.status == TicketStatus.AVAILABLE)
+    
+    def get_available_ticket(self):
+        for ticket in self.tickets:
+            if ticket.status == TicketStatus.AVAILABLE:
+                return ticket
+        return None
+    
+    def __str__(self):
+        return f"{self.name} - ${self.price} ({self.get_available_count()} available)"
+
+
+class Ticket:
+    def __init__(self, ticket_id, category, price):
+        self.ticket_id = ticket_id
+        self.category = category
+        self.price = price
+        self.status = TicketStatus.AVAILABLE
+        self.booking = None
+    
+    def book(self, booking):
+        if self.status == TicketStatus.AVAILABLE:
+            self.status = TicketStatus.BOOKED
+            self.booking = booking
+            return True
+        return False
+    
+    def cancel(self):
+        if self.status == TicketStatus.BOOKED:
+            self.status = TicketStatus.CANCELED
+            return True
+        return False
+    
+    def __str__(self):
+        return f"Ticket {self.ticket_id} ({self.category}) - {self.status.value}"
+
+
+class User:
+    def __init__(self, name, email, phone):
+        self.id = str(uuid.uuid4())[:8]
+        self.name = name
+        self.email = email
+        self.phone = phone
+        self.bookings = []
+    
+    def book_tickets(self, event, ticket_category, num_tickets, payment_method):
+        booking = Booking(self, event)
+        tickets_booked = 0
+        
+        for _ in range(num_tickets):
+            ticket = ticket_category.get_available_ticket()
+            if not ticket:
+                break
+            
+            booking.add_ticket(ticket)
+            tickets_booked += 1
+        
+        if tickets_booked > 0:
+            payment = Payment(booking.calculate_total(), payment_method)
+            booking.set_payment(payment)
+            self.bookings.append(booking)
+            return booking
+        return None
+    
+    def cancel_booking(self, booking_id):
+        for booking in self.bookings:
+            if booking.id == booking_id:
+                return booking.cancel()
+        return False
+    
+    def get_booking_history(self):
+        return sorted(self.bookings, key=lambda x: x.booking_time, reverse=True)
+    
+    def __str__(self):
+        return f"{self.name} ({self.email})"
+
+
+class Booking:
+    def __init__(self, user, event):
+        self.id = str(uuid.uuid4())[:8]
+        self.user = user
+        self.event = event
+        self.tickets = []
+        self.booking_time = datetime.datetime.now()
+        self.status = TicketStatus.BOOKED
+        self.payment = None
+    
+    def add_ticket(self, ticket):
+        if ticket.book(self):
+            self.tickets.append(ticket)
+            return True
+        return False
+    
+    def set_payment(self, payment):
+        self.payment = payment
+    
+    def calculate_total(self):
+        return sum(ticket.price for ticket in self.tickets)
+    
+    def cancel(self):
+        if self.status == TicketStatus.BOOKED:
+            for ticket in self.tickets:
+                ticket.cancel()
+            self.status = TicketStatus.CANCELED
+            return True
+        return False
+    
+    def generate_confirmation(self):
+        confirmation = f"""
+Booking Confirmation
+====================
+Booking ID: {self.id}
+Event: {self.event.name}
+Date: {self.event.date.strftime('%d %b %Y, %H:%M')}
+Venue: {self.event.venue.name}
+
+Customer: {self.user.name}
+Email: {self.user.email}
+Phone: {self.user.phone}
+
+Tickets:
+"""
+        for i, ticket in enumerate(self.tickets, 1):
+            confirmation += f"  {i}. {ticket.ticket_id} - {ticket.category} - ${ticket.price}\n"
+        
+        confirmation += f"""
+Total Amount: ${self.calculate_total()}
+Payment Method: {self.payment.method.value}
+Payment Status: {self.payment.status}
+
+Booking Date: {self.booking_time.strftime('%d %b %Y, %H:%M')}
+Status: {self.status.value}
+"""
+        return confirmation
+    
+    def __str__(self):
+        return f"Booking {self.id} - {self.event.name} ({len(self.tickets)} tickets)"
+
+
+class Payment:
+    def __init__(self, amount, method):
+        self.id = str(uuid.uuid4())[:8]
+        self.amount = amount
+        self.method = method
+        self.timestamp = datetime.datetime.now()
+        self.status = "Completed"  # In a real system, this would be determined by payment processing
+    
+    def __str__(self):
+        return f"Payment {self.id} - ${self.amount} via {self.method.value} ({self.status})"
+
+
+class TicketBookingSystem:
+    def __init__(self, name):
+        self.name = name
+        self.venues = []
+        self.events = []
+        self.users = []
+    
+    def add_venue(self, venue):
+        self.venues.append(venue)
+        return venue
+    
+    def add_event(self, event):
+        self.events.append(event)
+        return event
+    
+    def register_user(self, name, email, phone):
+        user = User(name, email, phone)
+        self.users.append(user)
+        return user
+    
+    def find_events_by_date(self, date):
+        return [event for event in self.events if event.date.date() == date.date()]
+    
+    def find_events_by_category(self, category):
+        return [event for event in self.events if event.category.lower() == category.lower()]
+    
+    def find_user_by_email(self, email):
+        for user in self.users:
+            if user.email.lower() == email.lower():
+                return user
+        return None
+    
+    def find_event_by_id(self, event_id):
+        for event in self.events:
+            if event.id == event_id:
+                return event
+        return None
+
+
+# Example usage
+def run_ticket_booking_example():
+    # Initialize the booking system
+    system = TicketBookingSystem("TicketMaster")
+    
+    # Create venues
+    stadium = system.add_venue(Venue("Central Stadium", "123 Main St, Sports City", 50000))
+    theater = system.add_venue(Venue("Grand Theater", "456 Broadway, Arts District", 2000))
+    arena = system.add_venue(Venue("City Arena", "789 Concert Blvd, Downtown", 15000))
+    
+    # Create events
+    today = datetime.datetime.now()
+    tomorrow = today + datetime.timedelta(days=1)
+    next_week = today + datetime.timedelta(days=7)
+    
+    football_match = system.add_event(
+        Event("Champions League Final", stadium, tomorrow, "Annual football championship match", "Sports")
+    )
+    
+    concert = system.add_event(
+        Event("Rock Festival", arena, next_week, "Annual rock music festival", "Music")
+    )
+    
+    play = system.add_event(
+        Event("Hamlet", theater, tomorrow, "Shakespeare's classic tragedy", "Theater")
+    )
+    
+    # Add ticket categories to events
+    football_match.add_ticket_category(TicketCategory("VIP", 300, 1000))
+    football_match.add_ticket_category(TicketCategory("Premium", 200, 5000))
+    football_match.add_ticket_category(TicketCategory("Regular", 100, 10000))
+    
+    concert.add_ticket_category(TicketCategory("VIP", 250, 500))
+    concert.add_ticket_category(TicketCategory("Standard", 150, 5000))
+    
+    play.add_ticket_category(TicketCategory("Orchestra", 150, 500))
+    play.add_ticket_category(TicketCategory("Mezzanine", 100, 750))
+    play.add_ticket_category(TicketCategory("Balcony", 75, 750))
+    
+    # Register users
+    user1 = system.register_user("John Doe", "john@example.com", "123-456-7890")
+    user2 = system.register_user("Jane Smith", "jane@example.com", "987-654-3210")
+    
+    # Book tickets
+    football_vip = football_match.ticket_categories[0]  # VIP category
+    john_booking = user1.book_tickets(football_match, football_vip, 2, PaymentMethod.CREDIT_CARD)
+    
+    play_orchestra = play.ticket_categories[0]  # Orchestra category
+    jane_booking = user2.book_tickets(play, play_orchestra, 3, PaymentMethod.NETBANKING)
+    
+    # Print booking confirmations
+    print(f"\n{system.name} - Booking Demo\n")
+    
+    print("Booking 1:")
+    print(john_booking.generate_confirmation())
+    
+    print("\nBooking 2:")
+    print(jane_booking.generate_confirmation())
+    
+    # Cancel a booking
+    print("\nCancelling Jane's booking...")
+    user2.cancel_booking(jane_booking.id)
+    
+    # Check available tickets
+    print("\nAvailable tickets for the football match:")
+    for category, count in football_match.get_available_tickets():
+        print(f"- {category.name}: {count} tickets at ${category.price} each")
+    
+    # User booking history
+    print(f"\n{user1.name}'s booking history:")
+    for booking in user1.get_booking_history():
+        status = "Active" if booking.status == TicketStatus.BOOKED else "Cancelled"
+        print(f"- {booking.event.name}: {len(booking.tickets)} tickets ({status})")
+
+
+if __name__ == "__main__":
+    run_ticket_booking_example()
